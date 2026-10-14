@@ -1,0 +1,115 @@
+"""
+RAG 个人知识库问答 —— 最小可跑版本（约 60 行核心代码）
+========================================================
+能干嘛：把 ./docs 里的 PDF / Markdown / TXT 文档向量化建库，
+        然后你用中文提问，它返回「带引用出处」的答案。
+
+跑起来（5 步）：
+  1) pip install -r requirements.txt
+  2) 复制 .env.example 为 .env，填入你的 DEEPSEEK_API_KEY
+  3) 把文档放进 ./docs 文件夹（可放多个）
+  4) python rag.py ingest      # 建知识库（只需一次）
+  5) python rag.py ask 什么是注意力机制   # 提问
+
+依赖说明：向量化用 FastEmbed 本地小模型（bge-small-zh），
+          不依赖联网大模型，速度快、免费；问答用 DeepSeek API。
+"""
+
+import os
+import glob
+import argparse
+
+from dotenv import load_dotenv
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import FastEmbedEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+
+load_dotenv()
+API_KEY = os.getenv("DEEPSEEK_API_KEY")
+
+DOCS_DIR = "./docs"          # 放文档的文件夹
+DB_DIR = "./chroma_db"       # 向量库保存位置
+EMBED_MODEL = "BAAI/bge-small-zh-v1.5"
+
+
+def load_docs():
+    """读取 ./docs 下所有 PDF / MD / TXT 为 LangChain Document 列表。"""
+    docs = []
+    for path in glob.glob(f"{DOCS_DIR}/**/*", recursive=True):
+        low = path.lower()
+        if low.endswith(".pdf"):
+            docs += PyPDFLoader(path).load()
+        elif low.endswith((".md", ".txt")):
+            docs += TextLoader(path, encoding="utf-8").load()
+    return docs
+
+
+def ingest():
+    """切分文档 → 向量化 → 存入 Chroma。"""
+    print("读取文档中…")
+    raw = load_docs()
+    if not raw:
+        print(f"⚠️ 在 {DOCS_DIR} 没找到文档，请先放入 PDF/MD/TXT 再试。")
+        return
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=80)
+    chunks = splitter.split_documents(raw)
+    print(f"切分完成：共 {len(chunks)} 个文本片段")
+
+    embeddings = FastEmbedEmbeddings(model_name=EMBED_MODEL)
+    vectordb = Chroma.from_documents(chunks, embeddings, persist_directory=DB_DIR)
+    vectordb.persist()
+    print("✅ 知识库已建立，可以开始提问了。")
+
+
+def ask(question: str):
+    """检索 Top-K 片段 → 拼进 Prompt → 让大模型回答（仅依据资料）。"""
+    embeddings = FastEmbedEmbeddings(model_name=EMBED_MODEL)
+    vectordb = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+    retriever = vectordb.as_retriever(search_kwargs={"k": 4})
+
+    llm = ChatOpenAI(
+        model="deepseek-chat",
+        api_key=API_KEY,
+        base_url="https://api.deepseek.com/v1",
+        temperature=0,
+    )
+
+    prompt = ChatPromptTemplate.from_template(
+        "你是一个严谨的问答助手。只根据下面的【资料】回答；"
+        "如果资料里没有答案，就如实说「资料中未提及」。\n"
+        "【资料】\n{context}\n\n【问题】{question}\n\n"
+        "回答时尽量标注出处（如「来源1」「来源2」）："
+    )
+
+    def format_docs(docs):
+        return "\n\n".join(f"[来源 {i+1}] {d.page_content}" for i, d in enumerate(docs))
+
+    chain = (
+        {"context": retriever | format_docs, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+    print(chain.invoke(question))
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="RAG 个人知识库问答")
+    parser.add_argument("cmd", choices=["ingest", "ask"], help="ingest=建库, ask=提问")
+    parser.add_argument("text", nargs="*", help="提问内容（ask 时使用）")
+    args = parser.parse_args()
+
+    if args.cmd == "ingest":
+        ingest()
+    else:
+        question = " ".join(args.text)
+        if not question:
+            print("用法：python rag.py ask 你的问题")
+        else:
+            ask(question)
