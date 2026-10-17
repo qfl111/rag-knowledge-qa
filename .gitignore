@@ -8,6 +8,9 @@ __pycache__/
 # 向量数据库（本地生成，删了重新 ingest 即可重建）
 chroma_db/
 
+# 向量模型缓存（约 90MB，本地生成，无需提交；用 setup_model_cache.py 重建）
+model_cache/
+
 # 虚拟环境
 .venv/
 venv/

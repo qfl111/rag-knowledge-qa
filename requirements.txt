@@ -6,3 +6,6 @@ fastembed
 chromadb
 python-dotenv
 pypdf
+fastapi
+uvicorn
+python-multipart

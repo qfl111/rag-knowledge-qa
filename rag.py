@@ -35,6 +35,8 @@ API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DOCS_DIR = "./docs"          # 放文档的文件夹
 DB_DIR = "./chroma_db"       # 向量库保存位置
 EMBED_MODEL = "BAAI/bge-small-zh-v1.5"
+# 向量模型永久缓存目录：放在项目内，避免系统 Temp 被清理后反复重新下载
+MODEL_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_cache")
 
 
 def load_docs():
@@ -61,15 +63,20 @@ def ingest():
     chunks = splitter.split_documents(raw)
     print(f"切分完成：共 {len(chunks)} 个文本片段")
 
-    embeddings = FastEmbedEmbeddings(model_name=EMBED_MODEL)
+    embeddings = FastEmbedEmbeddings(model_name=EMBED_MODEL, cache_dir=MODEL_CACHE)
     vectordb = Chroma.from_documents(chunks, embeddings, persist_directory=DB_DIR)
     vectordb.persist()
     print("✅ 知识库已建立，可以开始提问了。")
 
 
-def ask(question: str):
-    """检索 Top-K 片段 → 拼进 Prompt → 让大模型回答（仅依据资料）。"""
-    embeddings = FastEmbedEmbeddings(model_name=EMBED_MODEL)
+def format_docs(docs):
+    """把检索到的片段拼成带编号的上下文。"""
+    return "\n\n".join(f"[来源 {i+1}] {d.page_content}" for i, d in enumerate(docs))
+
+
+def build_qa_chain():
+    """构建 RAG 问答链（检索 → 拼 Prompt → 大模型 → 解析）。"""
+    embeddings = FastEmbedEmbeddings(model_name=EMBED_MODEL, cache_dir=MODEL_CACHE)
     vectordb = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
     retriever = vectordb.as_retriever(search_kwargs={"k": 4})
 
@@ -87,16 +94,29 @@ def ask(question: str):
         "回答时尽量标注出处（如「来源1」「来源2」）："
     )
 
-    def format_docs(docs):
-        return "\n\n".join(f"[来源 {i+1}] {d.page_content}" for i, d in enumerate(docs))
-
-    chain = (
+    return (
         {"context": retriever | format_docs, "question": RunnablePassthrough()}
         | prompt
         | llm
         | StrOutputParser()
     )
-    print(chain.invoke(question))
+
+
+def answer_with_sources(question: str):
+    """返回 (答案文本, 引用片段列表)，供 Web / API 调用。"""
+    chain = build_qa_chain()
+    answer = chain.invoke(question)
+    # 单独再检索一次，拿到用于前端展示的引用原文
+    embeddings = FastEmbedEmbeddings(model_name=EMBED_MODEL, cache_dir=MODEL_CACHE)
+    vectordb = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+    docs = vectordb.as_retriever(search_kwargs={"k": 4}).invoke(question)
+    return answer, [d.page_content for d in docs]
+
+
+def ask(question: str):
+    """命令行版本：直接打印答案。"""
+    answer, _ = answer_with_sources(question)
+    print(answer)
 
 
 if __name__ == "__main__":

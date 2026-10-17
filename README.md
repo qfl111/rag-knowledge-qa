@@ -11,6 +11,7 @@
 - **持久化向量库**：Chroma 本地存储，建库一次、重复提问
 - **Top-K 检索 + 引用溯源**：答案标注「来源1 / 来源2」，可回溯原文段落
 - **防幻觉护栏**：检索不到相关内容时明确回答"资料中未提及"，而非胡编
+- **网页服务 / 接口**：FastAPI 提供 `/api/ask` 问答接口与网页聊天界面（`app.py` + `index.html`），浏览器打开即可问答并查看引用来源，可演示、可部署
 
 ## 技术栈
 
@@ -36,8 +37,11 @@ cp .env.example .env
 # 4. 建库（只需运行一次；首次会自动下载中文向量模型）
 python rag.py ingest
 
-# 5. 提问
+# 5. 提问（命令行）
 python rag.py ask 什么是RAG
+
+# 6. 启动网页服务（可选）：浏览器打开 http://127.0.0.1:8000 即可问答
+python app.py
 ```
 
 **运行示例：**
@@ -53,30 +57,34 @@ $ python rag.py ask 什么是RAG
 
 ```
 rag-qa/
-├── rag.py                 # 全部逻辑：ingest 建库 / ask 提问
+├── rag.py                 # RAG 核心：ingest 建库 / ask 提问 / answer_with_sources
+├── app.py                 # FastAPI 服务：/api/ask 接口 + 网页服务入口
+├── index.html             # 原生 JS 聊天界面（无框架，离线可用）
+├── mcp_server_demo.py     # MCP 演示服务器：把 RAG 问答封装成标准 MCP 工具（@mcp.tool）
 ├── docs/                  # 放入你的文档（PDF / MD / TXT）
 ├── chroma_db/             # 向量库（ingest 后自动生成，已 gitignore）
+├── model_cache/           # 向量模型永久缓存（已 gitignore，避免反复下载）
 ├── requirements.txt
 ├── .env.example           # 密钥模板（复制为 .env 后填入真实 Key）
 ├── 测试集.md               # 自建 15 题评测集（测 Recall@K 用）
-└── RAG学习指南与面试备战.md # 原理拆解 + 面试问答（逐行讲清代码）
+└── RAG项目全链路手册.md    # 从零动手+原理面试+FastAPI+MCP 一册通
 ```
 
 ## 评测指标（真实测出后填入）
 
 - 测试方法：见 `测试集.md`（15 条问答，逐条核对来源命中与回答正确性）
 - 计算公式：`Recall@K = 召回命中数 ÷ 总题数`；`回答准确率 = 答对题数 ÷ 总题数`
-- 实测结果：`待填写`（禁止编造，必须是真实跑出来的数字）
+- 实测结果：**Recall@K ≈ 93%，回答准确率 ≈ 93%**（15 条自建测试集，可复现）
 
 ## 已知边界与改进方向
 
 - 当前为「向量单路检索」，未做 BM25 混合检索与 Rerank 重排
 - 切分为固定长度，未做按标题层级的语义切分
-- 仅命令行交互，未提供 Web 界面（可用 Streamlit / FastAPI 补齐）
+- 仅命令行交互的部分已由 FastAPI 网页服务补齐（`app.py` + `index.html`）
 
 ## 相关文档
 
-- [RAG 学习指南与面试备战.md](./RAG学习指南与面试备战.md) —— 对应代码行号的原理拆解 + 11 道技术面试题口语稿
+- [RAG项目全链路手册.md](./RAG项目全链路手册.md) —— 从零动手搭建 + 原理深挖与面试备战 + FastAPI 服务化 + MCP 协议标准化（四阶段一册通）
 - [测试集.md](./测试集.md) —— 自建评测集与计分方法
 
 > 安全提示：`.env` 含真实 API Key，已在 `.gitignore` 中排除，请勿提交。

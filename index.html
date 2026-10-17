@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG 个人知识库问答</title>
+<style>
+  :root{ --bg:#0f1115; --panel:#171a21; --line:#262b36; --txt:#e6e9ef; --sub:#9aa3b2; --brand:#4f8cff; --user:#1e3a5f; --bot:#171a21; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--txt);height:100vh;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  #rebuild{background:transparent;border:1px solid var(--line);color:var(--sub);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px}
+  #rebuild:hover{border-color:var(--brand);color:var(--brand)}
+  #messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px}
+  .msg{max-width:78%;padding:12px 14px;border-radius:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;font-size:14px}
+  .msg .role{font-size:11px;color:var(--sub);margin-bottom:4px}
+  .user{align-self:flex-end;background:var(--user);border-bottom-right-radius:4px}
+  .bot{align-self:flex-start;background:var(--bot);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .sources{margin-top:10px;border-top:1px dashed var(--line);padding-top:8px;font-size:12px;color:var(--sub)}
+  .sources summary{cursor:pointer;color:var(--brand)}
+  .sources pre{white-space:pre-wrap;margin:6px 0 0;max-height:160px;overflow:auto;background:#0d0f14;padding:8px;border-radius:6px}
+  .input{display:flex;gap:10px;padding:14px 20px;border-top:1px solid var(--line);background:var(--panel)}
+  .input input{flex:1;background:#0d0f14;border:1px solid var(--line);color:var(--txt);padding:12px 14px;border-radius:10px;font-size:14px;outline:none}
+  .input input:focus{border-color:var(--brand)}
+  .input button{background:var(--brand);border:none;color:#fff;padding:0 20px;border-radius:10px;font-size:14px;cursor:pointer}
+  .input button:disabled{opacity:.5;cursor:not-allowed}
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 RAG 个人知识库问答</h1>
+  <button id="rebuild">重建知识库</button>
+</header>
+<div id="messages"></div>
+<div class="input">
+  <input id="q" placeholder="输入你的问题，回车发送…" autocomplete="off">
+  <button id="send">发送</button>
+</div>
+<script>
+const messages = document.getElementById('messages');
+const input = document.getElementById('q');
+const sendBtn = document.getElementById('send');
+const rebuildBtn = document.getElementById('rebuild');
+
+function el(tag, cls, txt){ const e = document.createElement(tag); if(cls) e.className = cls; if(txt !== undefined) e.textContent = txt; return e; }
+function scroll(){ messages.scrollTop = messages.scrollHeight; }
+
+function addUser(text){
+  const m = el('div','msg user');
+  m.appendChild(el('div','role','你'));
+  m.appendChild(el('div',null,text));
+  messages.appendChild(m); scroll();
+}
+function addBot(text, sources){
+  const m = el('div','msg bot');
+  m.appendChild(el('div','role','AI 助手'));
+  m.appendChild(el('div',null,text || '（无回答）'));
+  if(sources && sources.length){
+    const d = el('details','sources');
+    d.appendChild(el('summary',null,`引用来源（${sources.length}）`));
+    sources.forEach((src,i) => d.appendChild(el('pre',null,`【来源 ${i+1}】\n${src}`)));
+    m.appendChild(d);
+  }
+  messages.appendChild(m); scroll();
+}
+
+async function ask(){
+  const q = input.value.trim(); if(!q) return;
+  addUser(q); input.value = ''; sendBtn.disabled = true;
+  try{
+    const resp = await fetch('/api/ask', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question:q})
+    });
+    const data = await resp.json();
+    if(resp.ok) addBot(data.answer, data.sources);
+    else addBot('❌ 出错：' + (data.detail || '未知错误'));
+  }catch(err){ addBot('❌ 网络错误：' + err); }
+  finally{ sendBtn.disabled = false; input.focus(); }
+}
+
+sendBtn.onclick = ask;
+input.addEventListener('keydown', e => { if(e.key === 'Enter') ask(); });
+
+rebuildBtn.onclick = async () => {
+  rebuildBtn.disabled = true; rebuildBtn.textContent = '重建中…';
+  try{
+    const resp = await fetch('/api/ingest', {method:'POST'});
+    const data = await resp.json();
+    addBot(data.status === 'done' ? '✅ 知识库已重建完成。' : '重建失败');
+  }catch(e){ addBot('重建出错：' + e); }
+  finally{ rebuildBtn.disabled = false; rebuildBtn.textContent = '重建知识库'; }
+};
+input.focus();
+</script>
+</body>
+</html>
